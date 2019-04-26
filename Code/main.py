@@ -22,7 +22,7 @@ pd.options.mode.chained_assignment = None
 
 def load_data():
     print("Loading Data from Database")
-    conn = sqlite3.connect("../DataSet/yelpResData.db")
+    conn = sqlite3.connect("../Data/yelpResData.db")
     conn.text_factory = lambda x: str(x, 'gb2312', 'ignore')
     cursor = conn.cursor()
 

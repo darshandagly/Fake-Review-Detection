@@ -15,12 +15,14 @@ from collections import OrderedDict
 from sklearn.model_selection import GridSearchCV
 import matplotlib.pyplot as plt
 import seaborn as sns
+from tqdm import tqdm
 
 pd.options.mode.chained_assignment = None
 
 
 def load_data():
-    conn = sqlite3.connect("DataSet/yelpResData.db")
+    print("Loading Data from Database")
+    conn = sqlite3.connect("../DataSet/yelpResData.db")
     conn.text_factory = lambda x: str(x, 'gb2312', 'ignore')
     cursor = conn.cursor()
 
@@ -58,11 +60,12 @@ def load_data():
     # sns.countplot(x='flagged', data=df)
     # plt.title("Count of Reviews")
     # plt.show()
-
+    print("Data Load Complete")
     return df
 
 
 def data_cleaning(df):
+    print("Cleaning Data")
     # Removing \n from date field
     for i in range(len(df['date'])):
         if df['date'][i][0] == '\n':
@@ -91,11 +94,12 @@ def data_cleaning(df):
     # Lowercase Words
     df['reviewContent'] = df['reviewContent'].apply(
         lambda x: x.lower())
-
+    print("Data Cleaning Complete")
     return df
 
 
 def feature_engineering(df):
+    print("Feature Engineering: Creating New Features")
     # Maximum Number of Reviews per day per reviewer
     mnr_df1 = df[['reviewerID', 'date']].copy()
     mnr_df2 = mnr_df1.groupby(by=['date', 'reviewerID']).size().reset_index(name='mnr')
@@ -151,14 +155,15 @@ def feature_engineering(df):
     df = pd.merge(review_data, df3, on="reviewerID", how="left")
 
     df.drop(index=np.where(pd.isnull(df))[0], axis=0, inplace=True)
-
+    print("Feature Engineering Complete")
     return df
 
 
 def under_sampling(df):
+    print("Under-Sampling Data")
     # Count of Reviews
-    print("Authentic", len(df[(df['flagged'] == 'N')]))
-    print("Fake", len(df[(df['flagged'] == 'Y')]))
+    # print("Authentic", len(df[(df['flagged'] == 'N')]))
+    # print("Fake", len(df[(df['flagged'] == 'Y')]))
 
     sample_size = len(df[(df['flagged'] == 'Y')])
 
@@ -166,24 +171,23 @@ def under_sampling(df):
     fake_reviews_df = df[df['flagged'] == 'Y']
 
     authentic_reviews_us_df = authentic_reviews_df.sample(sample_size)
-
     under_sampled_df = pd.concat([authentic_reviews_us_df, fake_reviews_df], axis=0)
 
-    print("Under-Sampled Fake", len(under_sampled_df[(under_sampled_df['flagged'] == 'Y')]))
-    print("Under-Sampled Authentic", len(under_sampled_df[(under_sampled_df['flagged'] == 'N')]))
+    # print("Under-Sampled Fake", len(under_sampled_df[(under_sampled_df['flagged'] == 'Y')]))
+    # print("Under-Sampled Authentic", len(under_sampled_df[(under_sampled_df['flagged'] == 'N')]))
 
     # Graph of Data Distribution
     # fig, ax = plt.subplots(figsize=(6, 4))
     # sns.countplot(x='flagged', data=under_sampled_df)
     # plt.title("Count of Reviews")
     # plt.show()
-
+    print("Under-Sampling Complete")
     return under_sampled_df
 
-    # df.to_csv('under_sampled_df.csv', sep=',', index=False)
 
-
-def semi_supervised_learning(df, model, threshold=0.8, iterations=40):
+def semi_supervised_learning(df, model, algorithm, threshold=0.8, iterations=40):
+    df = df.copy()
+    print("Training "+algorithm+" Model")
     labels = df['flagged']
 
     df.drop(['reviewID', 'reviewerID', 'restaurantID', 'date', 'name', 'location', 'yelpJoinDate', 'flagged',
@@ -208,12 +212,12 @@ def semi_supervised_learning(df, model, threshold=0.8, iterations=40):
     #
     # grid_clf_acc.fit(train_data, train_label)
 
+    pbar = tqdm(total=iterations)
+
     while not all_labeled and (current_iteration < iterations):
+        # print("Before train data length : ", len(train_data))
+        # print("Before test data length : ", len(test_data))
         current_iteration += 1
-
-        print("Before train data length : ", len(train_data))
-        print("Before test data length : ", len(test_data))
-
         model.fit(train_data, train_label)
 
         probabilities = model.predict_proba(test_data)
@@ -221,32 +225,33 @@ def semi_supervised_learning(df, model, threshold=0.8, iterations=40):
 
         indices = np.argwhere(probabilities > threshold)
 
-        print("rows above threshold : ", len(indices))
+        # print("rows above threshold : ", len(indices))
         for item in indices:
             train_data.loc[test_data.index[item[0]]] = test_data.iloc[item[0]]
             train_label.loc[test_data.index[item[0]]] = pseudo_labels[item[0]]
         test_data.drop(test_data.index[indices[:, 0]], inplace=True)
         test_label.drop(test_label.index[indices[:, 0]], inplace=True)
-        print("After train data length : ", len(train_data))
-        print("After test data length : ", len(test_data))
+        # print("After train data length : ", len(train_data))
+        # print("After test data length : ", len(test_data))
         print("--" * 20)
 
         if len(test_data) == 0:
             print("Exiting loop")
             all_labeled = True
-
+        pbar.update(1)
+    pbar.close()
     predicted_labels = model.predict(test_data_copy)
 
     # print('Best Params : ', grid_clf_acc.best_params_)
+    print(algorithm + ' Model Results')
+    print('--' * 20)
     print('Accuracy Score : ' + str(accuracy_score(test_label_copy, predicted_labels)))
     print('Precision Score : ' + str(precision_score(test_label_copy, predicted_labels, pos_label="Y")))
     print('Recall Score : ' + str(recall_score(test_label_copy, predicted_labels, pos_label="Y")))
     print('F1 Score : ' + str(f1_score(test_label_copy, predicted_labels, pos_label="Y")))
-
     print('Confusion Matrix : \n' + str(confusion_matrix(test_label_copy, predicted_labels)))
-
     plot_confusion_matrix(test_label_copy, predicted_labels, classes=['N', 'Y'],
-                          title='Confusion Matrix').show()
+                          title=algorithm + ' Confusion Matrix').show()
 
 
 def plot_confusion_matrix(y_true, y_pred, classes, title=None, cmap=plt.cm.Blues):
@@ -288,17 +293,14 @@ def main():
     df = load_data()
     df = data_cleaning(df)
     df = feature_engineering(df)
-
     # df.to_csv('df.csv', sep=',', index=False)
-
     under_sampled_df = under_sampling(df)
-
     rf = RandomForestClassifier(random_state=42, criterion='entropy', max_depth=14, max_features='auto',
                                 n_estimators=500)
     nb = GaussianNB()
 
-    semi_supervised_learning(under_sampled_df, model=rf, threshold=0.7, iterations=15)
-
+    semi_supervised_learning(under_sampled_df, model=rf, threshold=0.7, iterations=15, algorithm='Random Forest')
+    semi_supervised_learning(under_sampled_df, model=nb, threshold=0.7, iterations=15, algorithm='Naive Bayes')
     end_time = time()
     print("Time taken : ", end_time - start_time)
 
